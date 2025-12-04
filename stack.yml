@@ -1,0 +1,112 @@
+version: "3.9"
+
+networks:
+  dbnet:
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: mariadb_encrypted
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/mariadb_root_password
+      MARIADB_DATABASE: appdb
+      MARIADB_USER: appuser
+      MARIADB_PASSWORD_FILE: /run/secrets/mariadb_app_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./mariadb/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    secrets:
+      - mariadb_root_password
+      - mariadb_app_password
+      - mariadb_file_keys
+    networks:
+      - dbnet
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p$(cat /run/secrets/mariadb_root_password)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+        reservations:
+          cpus: "0.25"
+          memory: 256m
+
+  mariadb-backup:
+    build: ./backup
+    container_name: mariadb_backup
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      MARIADB_HOST: "mariadb"
+      MARIADB_PORT: "3306"
+      MARIADB_USER: "backup_ro"
+      MARIADB_PASSWORD_FILE: "/run/secrets/mariadb_backup_password"
+      MARIADB_DATABASES: "--all-databases"
+      GPG_RECIPIENT: "dpo@exemple.local"
+      BACKUP_DIR: "/backups"
+
+      # Monitoring / notifications
+      # Age max d'un backup en heures (pour check_backup.sh)
+      BACKUP_MAX_AGE_HOURS: "30"
+
+      # Webhook (optionnel) : URL dans le secret backup_webhook_url
+      BACKUP_WEBHOOK_URL_FILE: "/run/secrets/backup_webhook_url"
+
+      # Mail (optionnel) : configuration SMTP pour msmtp
+      BACKUP_ALERT_EMAIL: "alerts@example.local"
+      BACKUP_SMTP_HOST: "smtp.example.local"
+      BACKUP_SMTP_PORT: "587"
+      BACKUP_SMTP_USER: "backup-alerts"
+      BACKUP_SMTP_PASSWORD_FILE: "/run/secrets/backup_smtp_password"
+      BACKUP_SMTP_FROM: "backup@mariadb.local"
+    volumes:
+      - ./backups:/backups
+      - ./logs:/home/backup/logs
+    secrets:
+      - mariadb_backup_password
+      - dpo_pubkey
+      - backup_webhook_url
+      - backup_smtp_password
+    networks:
+      - dbnet
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/check_backup.sh"]
+      interval: 10m
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+        reservations:
+          cpus: "0.1"
+          memory: 128m
+
+volumes:
+  mariadb_data:
+
+secrets:
+  mariadb_root_password:
+    file: ./secrets/mariadb_root_password.txt
+  mariadb_app_password:
+    file: ./secrets/mariadb_app_password.txt
+  mariadb_backup_password:
+    file: ./secrets/mariadb_backup_password.txt
+  mariadb_file_keys:
+    file: ./secrets/mariadb_file_keys.txt
+  dpo_pubkey:
+    file: ./secrets/dpo_pubkey.asc
+  backup_webhook_url:
+    file: ./secrets/backup_webhook_url.txt
+  backup_smtp_password:
+    file: ./secrets/backup_smtp_password.txt
