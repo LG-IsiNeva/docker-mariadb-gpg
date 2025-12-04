@@ -1,4 +1,4 @@
-COMPOSE ?= docker compose
+COMPOSE ?= docker-compose
 STACK_FILE ?= stack.yml
 
 .PHONY: build up down logs backup restore monitor help

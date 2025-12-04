@@ -55,8 +55,8 @@ openssl rand -hex 32
 openssl rand -hex 32
 
 cat > secrets/mariadb_file_keys.txt <<'EOF'
-1;AES;0123456789ABCDEF0123456789ABCDEF
-2;AES;FEDCBA9876543210FEDCBA9876543210
+1;0123456789ABCDEF0123456789ABCDEF
+2;FEDCBA9876543210FEDCBA9876543210
 EOF
 
 # Clé publique GPG du DPO (sur le poste DPO) :
@@ -76,7 +76,7 @@ echo "MonSuperMotDePasseSMTP" > secrets/backup_smtp_password.txt
 ## 3. Réseau, ports et sécurité
 
 - Les services sont connectés sur un réseau Docker dédié `dbnet`.
-- MariaDB expose le port `3306:3306` :
+- MariaDB expose le port `3307:3306` :
   - si tu n'as pas besoin d'accès extérieur (autre que Docker), tu peux supprimer le bloc `ports:` de `mariadb` dans `stack.yml`.
 - Les secrets (`mariadb_*_password`, `mariadb_file_keys`, `dpo_pubkey`, etc.) sont montés dans `/run/secrets/`.
 
