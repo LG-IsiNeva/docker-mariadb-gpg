@@ -77,10 +77,10 @@ echo "MonSuperMotDePasseSMTP" > secrets/backup_smtp_password.txt
 
 - Les services sont connectés sur un réseau Docker dédié `dbnet`.
 - MariaDB expose le port `3306:3306` :
-  - si tu n’as pas besoin d’accès extérieur (autre que Docker), tu peux supprimer le bloc `ports:` de `mariadb` dans `stack.yml`.
+  - si tu n'as pas besoin d'accès extérieur (autre que Docker), tu peux supprimer le bloc `ports:` de `mariadb` dans `stack.yml`.
 - Les secrets (`mariadb_*_password`, `mariadb_file_keys`, `dpo_pubkey`, etc.) sont montés dans `/run/secrets/`.
 
-Le chiffrement InnoDB s’appuie sur `mariadb_file_keys.txt` monté comme secret :
+Le chiffrement InnoDB s'appuie sur `mariadb_file_keys.txt` monté comme secret :
 
 ```ini
 file_key_management_filename = /run/secrets/mariadb_file_keys
@@ -91,7 +91,7 @@ file_key_management_encryption_algorithm = AES_CTR
 
 ## 4. Commandes Makefile
 
-Le `Makefile` suppose `docker compose` (v2).  
+Le `Makefile` suppose `docker compose` (v2).
 Si tu utilises `docker-compose`, adapte la variable `COMPOSE` dans le Makefile.
 
 ### 4.1 Build des images
@@ -139,7 +139,7 @@ make logs
 
 ---
 
-## 5. Création de l’utilisateur SQL de backup
+## 5. Création de l'utilisateur SQL de backup
 
 Une fois `make up` lancé et le conteneur MariaDB démarré :
 
@@ -158,7 +158,7 @@ GRANT SELECT, SHOW VIEW, RELOAD, LOCK TABLES, REPLICATION CLIENT
 FLUSH PRIVILEGES;
 ```
 
-> Tu peux aussi automatiser ça avec un script d’init SQL monté dans `docker-entrypoint-initdb.d`.
+> Tu peux aussi automatiser ça avec un script d'init SQL monté dans `docker-entrypoint-initdb.d`.
 
 ---
 
@@ -172,7 +172,7 @@ Le conteneur `mariadb-backup` :
 
 Le script `backup.sh` fait :
 
-1. création d’un fichier temporaire `/tmp/backup-my.cnf.XXXXXX` utilisé par `mysqldump` via `--defaults-extra-file=...`
+1. création d'un fichier temporaire `/tmp/backup-my.cnf.XXXXXX` utilisé par `mysqldump` via `--defaults-extra-file=...`
 2. exécution de :
 
    ```bash
@@ -180,14 +180,14 @@ Le script `backup.sh` fait :
    ```
 
 3. suppression du fichier de config temporaire
-4. calcul d’un `sha256sum` (`.sha256`) pour vérification d'intégrité
+4. calcul d'un `sha256sum` (`.sha256`) pour vérification d'intégrité
 5. rotation (suppression des backups `.sql.gz.gpg` et `.sha256` de plus de 30 jours)
 6. logging structuré + notifications (webhook / mail)
 
-Grâce à `set -euo pipefail` + un `trap ERR`, en cas d’erreur MySQL/GPG/IO, le script :
+Grâce à `set -euo pipefail` + un `trap ERR`, en cas d'erreur MySQL/GPG/IO, le script :
 
-- s’arrête proprement
-- logue l’erreur
+- s'arrête proprement
+- logue l'erreur
 - envoie les notifications configurées.
 
 ---
@@ -209,7 +209,7 @@ Utilisation :
 make monitor
 ```
 
-Ce script est aussi utilisé comme **healthcheck** du service `mariadb-backup`.  
+Ce script est aussi utilisé comme **healthcheck** du service `mariadb-backup`.
 Tu peux le brancher sur une sonde de supervision (Zabbix, Centreon, Prometheus, etc.) via `docker exec` ou autre.
 
 ---
@@ -290,7 +290,7 @@ Dans `stack.yml` :
 
 ## 11. Améliorations possibles
 
-- Script d’init SQL pour `backup_ro` (monté dans `docker-entrypoint-initdb.d`).
+- Script d'init SQL pour `backup_ro` (monté dans `docker-entrypoint-initdb.d`).
 - Rétention avancée (daily/weekly/monthly).
 - Intégration à un SIEM / logging centralisé (ELK, Loki, etc.).
 - Chiffrement des colonnes sensibles côté application (clé hors de la DB).
