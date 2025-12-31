@@ -1,6 +1,8 @@
-version: "3.9"
+version: '3.8'
 
 networks:
+  traefik_proxy:
+    external: true
   dbnet:
 
 services:
@@ -17,12 +19,24 @@ services:
     volumes:
       - mariadb_data:/var/lib/mysql
       - ./mariadb/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./mariadb/init_users.sql:/docker-entrypoint-initdb.d/init_users.sql:ro
     secrets:
       - mariadb_root_password
       - mariadb_app_password
       - mariadb_file_keys
+      - ca_crt
+      - server_crt
+      - server_key
     networks:
       - dbnet
+      - traefik_proxy
+    labels:
+      - traefik.enable=true
+      - traefik.tcp.routers.mariadb-secure.rule=HostSNI(`*`)
+      - traefik.tcp.routers.mariadb-secure.entrypoints=mariadb-secure
+      - traefik.tcp.routers.mariadb-secure.middlewares=tcpSecureByIp@file
+      - traefik.tcp.routers.mariadb-secure.service=mariadb-secure-svc
+      - traefik.tcp.services.mariadb-secure-svc.loadbalancer.server.port=3307
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-p$(cat /run/secrets/mariadb_root_password)"]
       interval: 30s
@@ -52,15 +66,8 @@ services:
       MARIADB_DATABASES: "--all-databases"
       GPG_RECIPIENT: "dpo@exemple.local"
       BACKUP_DIR: "/backups"
-
-      # Monitoring / notifications
-      # Age max d'un backup en heures (pour check_backup.sh)
       BACKUP_MAX_AGE_HOURS: "30"
-
-      # Webhook (optionnel) : URL dans le secret backup_webhook_url
       BACKUP_WEBHOOK_URL_FILE: "/run/secrets/backup_webhook_url"
-
-      # Mail (optionnel) : configuration SMTP pour msmtp
       BACKUP_ALERT_EMAIL: "alerts@example.local"
       BACKUP_SMTP_HOST: "smtp.example.local"
       BACKUP_SMTP_PORT: "587"
@@ -110,3 +117,9 @@ secrets:
     file: ./secrets/backup_webhook_url.txt
   backup_smtp_password:
     file: ./secrets/backup_smtp_password.txt
+  ca_crt:
+    file: ./secrets/ca.crt
+  server_crt:
+    file: ./secrets/server.crt
+  server_key:
+    file: ./secrets/server.key

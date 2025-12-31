@@ -18,7 +18,6 @@ Ce projet fournit une stack Docker pour :
 ```text
 .
 ├─ docker-compose.yml        # Définition des services Docker (réseau, healthchecks, secrets)
-├─ Makefile                  # Automatisation build/deploy/backup/monitor/restore
 ├─ README.md                 # Ce document
 ├─ mariadb/
 │  └─ my.cnf                 # Configuration MariaDB + TDE (file_key_management)
@@ -42,24 +41,50 @@ Ce projet fournit une stack Docker pour :
 
 ## 2. Préparation des secrets
 
-Dans `secrets/` :
+
+### 2.1 Variables d'environnement et .env
+
+Définir les utilisateurs/clients dans le fichier `.env` :
+
+```env
+# Liste des utilisateurs/clients (séparés par des virgules, sans espaces)
+CLIENT_NAMES=admin,app_user,backup_user,app_developer
+```
+
+### 2.2 Génération automatique des certificats mTLS
+
+Utiliser le script suivant pour générer la CA, le certificat serveur et les certificats clients (un par nom dans `CLIENT_NAMES`) :
 
 ```bash
+cd backup
+./generate_certs.sh
+```
+
+Les certificats et clés sont générés dans le dossier `secrets/` :
+- `ca.crt`, `ca.key` : autorité de certification
+- `server.crt`, `server.key` : certificat serveur
+- `<client>.crt`, `<client>.key` : certificats clients (un par utilisateur)
+
+> Le CN du certificat client doit correspondre au nom d'utilisateur MariaDB.
+
+### 2.3 Secrets MariaDB et GPG
+
+```bash
+# Mots de passe utilisateurs (un fichier par utilisateur)
 echo "SuperRootPwd"   > secrets/mariadb_root_password.txt
-echo "AppPwd123!"     > secrets/mariadb_app_password.txt
-echo "BackupPwd123!"  > secrets/mariadb_backup_password.txt
+echo "AppPwd123!"     > secrets/app_user_password.txt
+echo "BackupPwd123!"  > secrets/backup_user_password.txt
+echo "DevPwd123!"     > secrets/app_developer_password.txt
 
 # Clés InnoDB (exemple, à générer proprement)
-# Utiliser de vraies clés aléatoires :
 openssl rand -hex 32
 openssl rand -hex 32
-
 cat > secrets/mariadb_file_keys.txt <<'EOF'
 1;0123456789ABCDEF0123456789ABCDEF
 2;FEDCBA9876543210FEDCBA9876543210
 EOF
 
-# Clé publique GPG du DPO (sur le poste DPO) :
+# Clé publique GPG du DPO (sur le poste DPO)
 gpg --armor --export dpo@exemple.local > secrets/dpo_pubkey.asc
 
 # URL de webhook (optionnel)
@@ -70,6 +95,84 @@ echo "MonSuperMotDePasseSMTP" > secrets/backup_smtp_password.txt
 ```
 
 > 💡 Remplace les valeurs d'exemple par des secrets **réels** et ne versionne jamais ce répertoire.
+
+---
+
+## 3. Authentification Mutuelle TLS (mTLS)
+
+MariaDB peut être configuré pour exiger une authentification mutuelle TLS 1.3 :
+
+- Le serveur utilise `server.crt` et `server.key` (générés dans `secrets/`).
+- Les clients doivent présenter leur certificat (`<client>.crt`/`<client>.key`), signé par la CA (`ca.crt`).
+- Le CN du certificat client doit correspondre au nom d'utilisateur MariaDB.
+
+Configurer MariaDB dans `my.cnf` :
+
+```ini
+[mysqld]
+ssl-ca=/run/secrets/ca.crt
+ssl-cert=/run/secrets/server.crt
+ssl-key=/run/secrets/server.key
+require_secure_transport=ON
+tls_version=TLSv1.3
+```
+
+> Monter les fichiers secrets dans `/run/secrets/` via Docker Compose/Swarm.
+
+Pour chaque client, fournir le couple `<client>.crt`/`<client>.key` et la CA (`ca.crt`).
+
+### Exemple de connexion depuis WinDev (mTLS)
+
+Pour se connecter à MariaDB avec mTLS depuis WinDev :
+
+1. Placez les fichiers suivants sur le poste client WinDev :
+  - ca.crt (autorité de certification)
+  - <client>.crt (certificat client)
+  - <client>.key (clé privée du client)
+
+2. Dans le code WinDev (WLanguage) :
+
+```wlanguage
+MaConnexion est une Connexion
+MaConnexion..Provider = "MySQL"
+MaConnexion..Serveur = "adresse_du_serveur"
+MaConnexion..Port = 3307
+MaConnexion..Utilisateur = "<client>"
+MaConnexion..MotDePasse = "(mot de passe du client)"
+MaConnexion..BaseDeDonnees = "appdb"
+// Chemins absolus ou relatifs selon l'environnement WinDev
+MaConnexion..Option["SSL_CA"] = "C:\\chemin\\vers\\ca.crt"
+MaConnexion..Option["SSL_CERT"] = "C:\\chemin\\vers\\<client>.crt"
+MaConnexion..Option["SSL_KEY"] = "C:\\chemin\\vers\\<client>.key"
+MaConnexion..Option["SSL_MODE"] = "REQUIRED"
+
+SI HConnecte(MaConnexion) ALORS
+  Info("Connexion sécurisée établie !")
+SINON
+  Erreur("Echec de connexion : " + HErreurInfo())
+FIN
+```
+
+> Adapter les chemins et le nom d'utilisateur selon votre configuration.
+
+### Exemple de connexion client mTLS
+
+Pour se connecter à MariaDB avec mTLS :
+
+```bash
+mariadb \
+  --host=localhost \
+  --port=3307 \
+  --ssl-ca=secrets/ca.crt \
+  --ssl-cert=secrets/<client>.crt \
+  --ssl-key=secrets/<client>.key \
+  --user=<client> \
+  --password=$(cat secrets/<client>_password.txt)
+```
+
+Remplacez `<client>` par le nom d'utilisateur souhaité (doit correspondre au CN du certificat client).
+
+> Le port doit correspondre à celui exposé dans stack.yml (ici 3307).
 
 ---
 
@@ -89,53 +192,77 @@ file_key_management_encryption_algorithm = AES_CTR
 
 ---
 
-## 4. Commandes Makefile
 
-Le `Makefile` suppose `docker compose` (v2).
-Si tu utilises `docker-compose`, adapte la variable `COMPOSE` dans le Makefile.
+## 4. Sauvegarde et restauration : procédures
 
-### 4.1 Build des images
+Des procédures détaillées sont disponibles pour la sauvegarde et la restauration :
 
-```bash
-make build
-```
+- [Procédure de sauvegarde](procedure_sauvegarde.md) :
+  - Lancer une sauvegarde manuelle
+  - Sauvegarde automatique (cron)
+  - Vérification de la fraîcheur
+  - Logs, supervision, sécurité
 
-### 4.2 Démarrage de la stack
+- [Procédure de restauration](procedure_restoration.md) :
+  - Récupération et vérification d’un backup
+  - Déchiffrement, transfert, restauration
+  - Vérifications post-restauration
+  - Sécurité et suppression des fichiers en clair
 
-```bash
-make up
-```
+Résumé rapide :
 
-### 4.3 Arrêt / suppression des conteneurs
+- Sauvegarde manuelle :
+  ```bash
+  docker compose exec mariadb_backup /usr/local/bin/backup.sh
+  ```
+- Vérification du dernier backup :
+  ```bash
+  docker compose exec mariadb_backup /usr/local/bin/check_backup.sh
+  ```
+- Restauration :
+  ```bash
+  gpg --decrypt mariadb_YYYY-MM-DD_HHMMSS.sql.gz.gpg | gunzip > restore.sql
+  scp restore.sql admin@serveur-mariadb:/tmp/restore.sql
+  docker compose exec -T mariadb_encrypted mariadb -u root -p < /tmp/restore.sql
+  ```
 
-```bash
-make down
-```
 
-### 4.4 Lancer un backup manuel
+---
 
-```bash
-make backup
-```
+## 5. Commandes Docker Compose
 
-Résultat : un fichier du type:
+Toutes les opérations se font désormais avec le fichier `docker-compose.yml` et la commande `docker compose` :
 
-```text
-backups/mariadb_YYYY-MM-DD_HHMMSS.sql.gz.gpg
-backups/mariadb_YYYY-MM-DD_HHMMSS.sql.gz.gpg.sha256
-```
+- Build des images :
+  ```bash
+  docker compose build
+  ```
+- Démarrage de la stack :
+  ```bash
+  docker compose up -d
+  ```
+- Arrêt / suppression des conteneurs :
+  ```bash
+  docker compose down
+  ```
+- Logs :
+  ```bash
+  docker compose logs -f
+  ```
+- Sauvegarde manuelle :
+  ```bash
+  docker compose exec mariadb_backup /usr/local/bin/backup.sh
+  ```
+- Vérification du dernier backup :
+  ```bash
+  docker compose exec mariadb_backup /usr/local/bin/check_backup.sh
+  ```
+- Restauration :
+  ```bash
+  docker compose exec -T mariadb_encrypted mariadb -u root -p < restore.sql
+  ```
 
-### 4.5 Vérifier la fraîcheur du dernier backup
-
-```bash
-make monitor
-```
-
-### 4.6 Voir les logs
-
-```bash
-make logs
-```
+> Les fichiers Makefile et stack.yml ne sont plus utilisés.
 
 ---
 

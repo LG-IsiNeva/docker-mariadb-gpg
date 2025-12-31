@@ -1,3 +1,4 @@
+
 # 🗄️ Procédure de restauration MariaDB (DPO)
 
 Cette procédure doit être exécutée **uniquement par la DPO** ou une personne habilitée, car elle nécessite l’accès :
@@ -23,6 +24,7 @@ backups/
 ```
 
 Ou sur le serveur de backup centralisé.
+
 
 Exemple de récupération depuis un serveur distant :
 
@@ -53,6 +55,7 @@ mariadb_2025-12-04_020000.sql.gz.gpg: OK
 
 Sur la machine DPO (où se trouve la clé privée) :
 
+
 ```bash
 gpg --decrypt mariadb_2025-12-04_020000.sql.gz.gpg | gunzip > restore.sql
 ```
@@ -68,6 +71,7 @@ gpg --decrypt mariadb_2025-12-04_020000.sql.gz.gpg | gunzip > restore.sql
 
 Exemple :
 
+
 ```bash
 scp restore.sql admin@serveur-mariadb:/tmp/restore.sql
 ```
@@ -76,16 +80,8 @@ scp restore.sql admin@serveur-mariadb:/tmp/restore.sql
 
 # 5. 🗃️ Restauration dans MariaDB
 
-### 5.1 Connexion au serveur MariaDB
 
-Si MariaDB tourne en Docker :
-
-```bash
-ssh admin@serveur-mariadb
-cd /chemin/du/projet
-```
-
-### 5.2 Exécuter la restauration
+### 5.1 Restauration dans le conteneur MariaDB
 
 Dans le cas d’un conteneur nommé `mariadb_encrypted` :
 
@@ -101,17 +97,20 @@ Le mot de passe root est celui stocké dans `secrets/mariadb_root_password.txt`.
 
 ### Vérifier l’existence de la base :
 
+
 ```bash
 docker compose exec -T mariadb_encrypted mariadb -u root -p -e "SHOW DATABASES;"
 ```
 
 ### Repérer quelques tables importantes :
 
+
 ```bash
 docker compose exec -T mariadb_encrypted mariadb -u root -p -e "SELECT COUNT(*) FROM appdb.utilisateurs;"
 ```
 
 ### Vérifier les routines :
+
 
 ```bash
 docker compose exec -T mariadb_encrypted mariadb -u root -p -e "SHOW PROCEDURE STATUS;"
@@ -125,11 +124,13 @@ Une fois la restauration validée :
 
 ### Sur le serveur MariaDB :
 
+
 ```bash
 sudo shred -u /tmp/restore.sql
 ```
 
 ### Sur la machine DPO :
+
 
 ```bash
 shred -u restore.sql
