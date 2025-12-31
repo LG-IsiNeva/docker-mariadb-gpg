@@ -9,8 +9,6 @@ Ce projet fournit une stack Docker pour :
 - **Monitoring** de la fraîcheur des backups + **notifications** (webhook / mail)
 - Architecture durcie : réseau isolé, healthchecks, rotation, checksums, resource limits
 
-> ⚠️ Les fichiers du répertoire `secrets/` sont des *placeholders* à adapter et ne doivent **jamais** être commités en production.
-
 ---
 
 ## 1. Arborescence
@@ -94,8 +92,6 @@ echo "https://mon.webhook.local/backup" > secrets/backup_webhook_url.txt
 echo "MonSuperMotDePasseSMTP" > secrets/backup_smtp_password.txt
 ```
 
-> 💡 Remplace les valeurs d'exemple par des secrets **réels** et ne versionne jamais ce répertoire.
-
 ---
 
 ## 3. Authentification Mutuelle TLS (mTLS)
@@ -116,8 +112,6 @@ ssl-key=/run/secrets/server.key
 require_secure_transport=ON
 tls_version=TLSv1.3
 ```
-
-> Monter les fichiers secrets dans `/run/secrets/` via Docker Compose/Swarm.
 
 Pour chaque client, fournir le couple `<client>.crt`/`<client>.key` et la CA (`ca.crt`).
 
@@ -172,7 +166,8 @@ mariadb \
 
 Remplacez `<client>` par le nom d'utilisateur souhaité (doit correspondre au CN du certificat client).
 
-> Le port doit correspondre à celui exposé dans stack.yml (ici 3307).
+
+> Le port doit correspondre à celui exposé dans docker-compose.yml (ici 3307).
 
 ---
 
@@ -180,7 +175,7 @@ Remplacez `<client>` par le nom d'utilisateur souhaité (doit correspondre au CN
 
 - Les services sont connectés sur un réseau Docker dédié `dbnet`.
 - MariaDB expose le port `3307:3306` :
-  - si tu n'as pas besoin d'accès extérieur (autre que Docker), tu peux supprimer le bloc `ports:` de `mariadb` dans `stack.yml`.
+  - si tu n'as pas besoin d'accès extérieur (autre que Docker), tu peux supprimer le bloc `ports:` de `mariadb` dans `docker-compose.yml`.
 - Les secrets (`mariadb_*_password`, `mariadb_file_keys`, `dpo_pubkey`, etc.) sont montés dans `/run/secrets/`.
 
 Le chiffrement InnoDB s'appuie sur `mariadb_file_keys.txt` monté comme secret :
@@ -262,25 +257,23 @@ Toutes les opérations se font désormais avec le fichier `docker-compose.yml` e
   docker compose exec -T mariadb_encrypted mariadb -u root -p < restore.sql
   ```
 
-> Les fichiers Makefile et stack.yml ne sont plus utilisés.
-
 ---
 
 ## 5. Création de l'utilisateur SQL de backup
 
-Une fois `make up` lancé et le conteneur MariaDB démarré :
+Une fois la stack démarrée avec `docker compose up -d` et le conteneur MariaDB prêt :
 
 ```bash
-docker compose -f stack.yml exec -it mariadb_encrypted mariadb -u root -p
+docker compose exec -it mariadb_encrypted mariadb -u root -p
 ```
 
 Puis, dans MariaDB :
 
 ```sql
-CREATE USER 'backup_ro'@'%' IDENTIFIED BY 'BackupPwd123!';
+CREATE USER 'backup_user'@'%' IDENTIFIED BY 'BackupPwd123!';
 
 GRANT SELECT, SHOW VIEW, RELOAD, LOCK TABLES, REPLICATION CLIENT
-  ON *.* TO 'backup_ro'@'%';
+  ON *.* TO 'backup_user'@'%';
 
 FLUSH PRIVILEGES;
 ```
@@ -293,18 +286,19 @@ FLUSH PRIVILEGES;
 
 Le conteneur `mariadb-backup` :
 
-- lit le mot de passe de `backup_ro` depuis `/run/secrets/mariadb_backup_password`
+- lit le mot de passe de `backup_user` depuis `/run/secrets/mariadb_backup_password`
 - importe la clé publique du DPO depuis `/run/secrets/dpo_pubkey`
 - exécute quotidiennement (via `cron`) le script `backup.sh`
 
 Le script `backup.sh` fait :
 
+
 1. création d'un fichier temporaire `/tmp/backup-my.cnf.XXXXXX` utilisé par `mysqldump` via `--defaults-extra-file=...`
 2. exécution de :
 
-   ```bash
-   mysqldump --defaults-extra-file=...      --single-transaction --routines --triggers      ${MARIADB_DATABASES}      | gzip      | gpg --encrypt --recipient "${GPG_RECIPIENT}"      > backups/mariadb_YYYY-MM-DD_HHMMSS.sql.gz.gpg
-   ```
+  ```bash
+  mysqldump --defaults-extra-file=...      --single-transaction --routines --triggers      ${MARIADB_DATABASES}      | gzip      | gpg --encrypt --recipient "${GPG_RECIPIENT}"      > backups/mariadb_YYYY-MM-DD_HHMMSS.sql.gz.gpg
+  ```
 
 3. suppression du fichier de config temporaire
 4. calcul d'un `sha256sum` (`.sha256`) pour vérification d'intégrité
@@ -337,7 +331,6 @@ make monitor
 ```
 
 Ce script est aussi utilisé comme **healthcheck** du service `mariadb-backup`.
-Tu peux le brancher sur une sonde de supervision (Zabbix, Centreon, Prometheus, etc.) via `docker exec` ou autre.
 
 ---
 
@@ -362,7 +355,7 @@ Le script `backup.sh` envoie des notifications **en cas d'échec** et logue les 
 
 Le script utilise `msmtp`.
 
-Variables d'environnement (dans `stack.yml`, service `mariadb-backup`) :
+Variables d'environnement (dans `docker-compose.yml`, service `mariadb-backup`) :
 
 - `BACKUP_ALERT_EMAIL` : destinataire des alertes
 - `BACKUP_SMTP_HOST`, `BACKUP_SMTP_PORT`
@@ -380,13 +373,12 @@ Variables d'environnement (dans `stack.yml`, service `mariadb-backup`) :
 
 ## 9. Resource limits & healthchecks
 
-Dans `stack.yml` :
+
+Dans `docker-compose.yml` :
 
 - Les services `mariadb` et `mariadb-backup` ont des limites et réservations CPU/mémoire (section `deploy.resources`).
 - `mariadb` a un healthcheck `mysqladmin ping`.
 - `mariadb-backup` a un healthcheck basé sur `check_backup.sh` (âge du dernier backup).
-
-> Selon ton orchestrateur (compose vs Swarm), `deploy.resources` et `depends_on.condition: service_healthy` seront plus ou moins utilisés, mais la config reste cohérente.
 
 ---
 
@@ -407,19 +399,52 @@ Dans `stack.yml` :
 
 4. Restaurer dans le conteneur MariaDB :
 
-   ```bash
-   docker compose -f stack.yml exec -T mariadb_encrypted mariadb -u root -p < /tmp/restore.sql
-   ```
+  ```bash
+  docker compose exec -T mariadb_encrypted mariadb -u root -p < /tmp/restore.sql
+  ```
 
 5. Supprimer les fichiers SQL en clair (`restore.sql`, `/tmp/restore.sql`).
 
----
 
-## 11. Améliorations possibles
-
-- Script d'init SQL pour `backup_ro` (monté dans `docker-entrypoint-initdb.d`).
-- Rétention avancée (daily/weekly/monthly).
-- Intégration à un SIEM / logging centralisé (ELK, Loki, etc.).
-- Chiffrement des colonnes sensibles côté application (clé hors de la DB).
 
 Cette version intègre déjà la plupart des remarques de durcissement (ports cohérents, secrets, réseau isolé, compression avant chiffrement, meilleure gestion des erreurs, monitoring et notifications).
+
+---
+
+## 11. Dépannage
+
+### Erreurs courantes et solutions
+
+#### Fichier de mot de passe MariaDB introuvable
+```
+Fichier de mot de passe MariaDB introuvable: /run/secrets/mariadb_app_password
+```
+- Vérifiez que le fichier secret existe dans le dossier `secrets/` et qu'il est bien monté dans le conteneur.
+- Le nom du fichier doit correspondre à la variable d'environnement ou au nom attendu dans le script.
+
+#### Aucun backup trouvé dans backups/
+```
+Aucun fichier de backup trouvé dans backups/
+```
+- Vérifiez que le script de sauvegarde s'est bien exécuté et que le dossier `backups/` est monté.
+- Vérifiez les logs du conteneur de backup pour plus de détails.
+
+#### Dernier backup trop ancien
+```
+Dernier backup trop ancien (> 30h)
+```
+- Vérifiez que la sauvegarde automatique (cron) fonctionne.
+- Lancez une sauvegarde manuelle pour valider le processus.
+
+#### Erreur GPG lors du chiffrement ou déchiffrement
+- Vérifiez que la clé publique du DPO est bien présente dans `secrets/dpo_pubkey.asc`.
+- Pour la restauration, assurez-vous d'avoir la clé privée et la passphrase correspondante.
+
+#### Problème d'envoi de notification (webhook ou mail)
+- Vérifiez la configuration des variables d'environnement liées au webhook ou SMTP.
+- Vérifiez la présence des secrets nécessaires (`backup_webhook_url.txt`, `backup_smtp_password.txt`).
+
+#### Erreur OpenSSL lors de la génération des certificats
+- Vérifiez que le binaire `openssl` est installé dans le conteneur ou sur la machine hôte.
+- Vérifiez la syntaxe du fichier `.env` et la présence de la variable `CLIENT_NAMES`.
+---

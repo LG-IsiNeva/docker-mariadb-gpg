@@ -78,4 +78,3 @@ Le script de backup envoie des notifications (webhook/mail) en cas d’échec.
 
 Voir la procédure détaillée dans `procedure_restoration.md`.
 
-> Les fichiers Makefile et stack.yml ne sont plus utilisés.
